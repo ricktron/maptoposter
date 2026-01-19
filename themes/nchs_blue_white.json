@@ -1,0 +1,15 @@
+{
+  "name": "NCHS Blue & White",
+  "description": "Nolan Catholic school-color palette: deep blue background with crisp white roads",
+  "bg": "#0B2C5D",
+  "text": "#FFFFFF",
+  "gradient_color": "#0B2C5D",
+  "water": "#0A2347",
+  "parks": "#123A73",
+  "road_motorway": "#FFFFFF",
+  "road_primary": "#F2F6FF",
+  "road_secondary": "#DDE8FF",
+  "road_tertiary": "#C6D8FF",
+  "road_residential": "#AFC8FF",
+  "road_default": "#C6D8FF"
+}
