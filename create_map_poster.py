@@ -1,4 +1,11 @@
 import osmnx as ox
+
+# OSMnx compat: project_gdf moved under ox.projection in v2.x
+try:
+    project_gdf = ox.project_gdf
+except AttributeError:
+    project_gdf = ox.projection.project_gdf
+
 import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 from matplotlib import font_manager
@@ -243,13 +250,13 @@ def create_poster(city, country, point, dist, output_file, args=None):
     G_proj = ox.project_graph(G)
     
     if water is not None and not water.empty:
-        water_proj = ox.project_gdf(water)
+        water_proj = project_gdf(water)
         water_proj = water_proj.to_crs(G_proj.graph['crs'])
     else:
         water_proj = None
         
     if parks is not None and not parks.empty:
-        parks_proj = ox.project_gdf(parks)
+        parks_proj = project_gdf(parks)
         parks_proj = parks_proj.to_crs(G_proj.graph['crs'])
     else:
         parks_proj = None
