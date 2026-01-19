@@ -1,6 +1,6 @@
 import osmnx as ox
 import matplotlib.pyplot as plt
-from matplotlib.font_manager import FontProperties
+from matplotlib.font_manager import FontProperties, font_manager
 import matplotlib.colors as mcolors
 import numpy as np
 from geopy.geocoders import Nominatim
@@ -10,6 +10,7 @@ import json
 import os
 from datetime import datetime
 import argparse
+from PIL import Image, ImageDraw, ImageFont
 
 THEMES_DIR = "themes"
 FONTS_DIR = "fonts"
@@ -36,16 +37,21 @@ def load_fonts():
 
 FONTS = load_fonts()
 
-def generate_output_filename(city, theme_name):
+def generate_output_filename(city, theme_name, lat=None, lon=None):
     """
     Generate unique output filename with city, theme, and datetime.
+    Falls back to lat_lon if city is not provided.
     """
     if not os.path.exists(POSTERS_DIR):
         os.makedirs(POSTERS_DIR)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    city_slug = city.lower().replace(' ', '_')
-    filename = f"{city_slug}_{theme_name}_{timestamp}.png"
+    if city:
+        city_slug = city.lower().replace(' ', '_')
+        filename = f"{city_slug}_{theme_name}_{timestamp}.png"
+    else:
+        # Use coordinates if city not provided
+        filename = f"{lat:.6f}_{lon:.6f}_{theme_name}_{timestamp}.png"
     return os.path.join(POSTERS_DIR, filename)
 
 def get_available_themes():
@@ -193,28 +199,110 @@ def get_edge_widths_by_type(G):
     
     return edge_widths
 
+def format_coords(lat: float, lon: float, decimals: int = 6) -> str:
+    """
+    Format coordinates with cardinal directions.
+    Example: 32.760275°N · 97.256112°W
+    """
+    ns = "N" if lat >= 0 else "S"
+    ew = "E" if lon >= 0 else "W"
+    return f"{abs(lat):.{decimals}f}°{ns} · {abs(lon):.{decimals}f}°{ew}"
+
+def _get_font_path() -> str:
+    """Get DejaVu Sans font path from matplotlib (reliable across platforms)."""
+    return font_manager.findfont("DejaVu Sans")
+
+def _fit_font(draw: ImageDraw.ImageDraw, text: str, font_path: str, start_size: int, max_width: int) -> ImageFont.FreeTypeFont:
+    """Auto-shrink font size until text fits within max_width."""
+    size = start_size
+    while size > 8:
+        font = ImageFont.truetype(font_path, size=size)
+        bbox = draw.textbbox((0, 0), text, font=font, stroke_width=2)
+        w = bbox[2] - bbox[0]
+        if w <= max_width:
+            return font
+        size -= 1
+    return ImageFont.truetype(font_path, size=8)
+
+def overlay_labels_png(png_path: str, label1: str | None, label2: str | None, label3: str | None, text_color: str):
+    """
+    Overlay 3-line label block at the bottom of the PNG image.
+    Auto-fits font sizes to 92% of image width.
+    """
+    labels = [x for x in [label1, label2, label3] if x and x.strip()]
+    if not labels:
+        return
+
+    img = Image.open(png_path).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    font_path = _get_font_path()
+
+    W, H = img.size
+    max_w = int(W * 0.92)
+    bottom_margin = int(H * 0.06)
+
+    # Starting sizes scale with image height
+    title_sz = int(H * 0.055)
+    sub_sz = int(H * 0.028)
+    coord_sz = int(H * 0.024)
+
+    sizes = [title_sz, sub_sz, coord_sz][:len(labels)]
+    fonts = []
+    for t, sz in zip(labels, sizes):
+        fonts.append(_fit_font(draw, t, font_path, sz, max_w))
+
+    # Measure total height with spacing
+    line_gap = int(H * 0.010)
+    heights = []
+    for t, f in zip(labels, fonts):
+        bbox = draw.textbbox((0, 0), t, font=f, stroke_width=2)
+        heights.append(bbox[3] - bbox[1])
+    total_h = sum(heights) + line_gap * (len(labels) - 1)
+
+    y = H - bottom_margin - total_h
+    stroke_fill = "#000000" if text_color.upper() != "#000000" else "#FFFFFF"
+
+    for t, f, h in zip(labels, fonts, heights):
+        bbox = draw.textbbox((0, 0), t, font=f, stroke_width=2)
+        w = bbox[2] - bbox[0]
+        x = (W - w) // 2
+        draw.text((x, y), t, font=f, fill=text_color, stroke_width=2, stroke_fill=stroke_fill)
+        y += h + line_gap
+
+    img.convert("RGB").save(png_path, quality=95)
+
 def get_coordinates(city, country):
     """
     Fetches coordinates for a given city and country using geopy.
     Includes rate limiting to be respectful to the geocoding service.
+    Now includes retry logic and longer timeout for robustness.
     """
     print("Looking up coordinates...")
-    geolocator = Nominatim(user_agent="city_map_poster")
+    geolocator = Nominatim(user_agent="maptoposter", timeout=10)
     
     # Add a small delay to respect Nominatim's usage policy
     time.sleep(1)
     
-    location = geolocator.geocode(f"{city}, {country}")
+    for attempt in range(3):
+        try:
+            location = geolocator.geocode(f"{city}, {country}")
+            if location:
+                print(f"✓ Found: {location.address}")
+                print(f"✓ Coordinates: {location.latitude}, {location.longitude}")
+                return (location.latitude, location.longitude)
+            else:
+                if attempt == 2:
+                    raise ValueError(f"Could not find coordinates for {city}, {country}")
+        except Exception as e:
+            if attempt == 2:
+                raise
+            time.sleep(1.0)
     
-    if location:
-        print(f"✓ Found: {location.address}")
-        print(f"✓ Coordinates: {location.latitude}, {location.longitude}")
-        return (location.latitude, location.longitude)
-    else:
-        raise ValueError(f"Could not find coordinates for {city}, {country}")
+    raise ValueError(f"Could not find coordinates for {city}, {country}")
 
-def create_poster(city, country, point, dist, output_file):
-    print(f"\nGenerating map for {city}, {country}...")
+def create_poster(city, country, point, dist, output_file, args=None):
+    location_str = f"{city}, {country}" if city and country else f"{point[0]:.6f}, {point[1]:.6f}"
+    print(f"\nGenerating map for {location_str}...")
     
     # Progress bar for data fetching
     with tqdm(total=3, desc="Fetching map data", unit="step", bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}') as pbar:
@@ -286,25 +374,32 @@ def create_poster(city, country, point, dist, output_file):
         font_sub = FontProperties(family='monospace', weight='normal', size=22)
         font_coords = FontProperties(family='monospace', size=14)
     
-    spaced_city = "  ".join(list(city.upper()))
-
     # --- BOTTOM TEXT ---
-    ax.text(0.5, 0.14, spaced_city, transform=ax.transAxes,
-            color=THEME['text'], ha='center', fontproperties=font_main, zorder=11)
-    
-    ax.text(0.5, 0.10, country.upper(), transform=ax.transAxes,
-            color=THEME['text'], ha='center', fontproperties=font_sub, zorder=11)
-    
-    lat, lon = point
-    coords = f"{lat:.4f}° N / {lon:.4f}° E" if lat >= 0 else f"{abs(lat):.4f}° S / {lon:.4f}° E"
-    if lon < 0:
-        coords = coords.replace("E", "W")
-    
-    ax.text(0.5, 0.07, coords, transform=ax.transAxes,
-            color=THEME['text'], alpha=0.7, ha='center', fontproperties=font_coords, zorder=11)
-    
-    ax.plot([0.4, 0.6], [0.125, 0.125], transform=ax.transAxes, 
-            color=THEME['text'], linewidth=1, zorder=11)
+    # Only draw default city/country text if no custom labels provided
+    if not (args and (args.label1 or args.label2 or args.label3)):
+        if city and country:
+            if args and args.no_letterspacing:
+                city_text = city.upper()
+            else:
+                city_text = "  ".join(list(city.upper()))
+            
+            ax.text(0.5, 0.14, city_text, transform=ax.transAxes,
+                    color=THEME['text'], ha='center', fontproperties=font_main, zorder=11)
+            
+            ax.text(0.5, 0.10, country.upper(), transform=ax.transAxes,
+                    color=THEME['text'], ha='center', fontproperties=font_sub, zorder=11)
+        
+        lat, lon = point
+        coords = f"{lat:.4f}° N / {lon:.4f}° E" if lat >= 0 else f"{abs(lat):.4f}° S / {lon:.4f}° E"
+        if lon < 0:
+            coords = coords.replace("E", "W")
+        
+        ax.text(0.5, 0.07, coords, transform=ax.transAxes,
+                color=THEME['text'], alpha=0.7, ha='center', fontproperties=font_coords, zorder=11)
+        
+        if city and country:
+            ax.plot([0.4, 0.6], [0.125, 0.125], transform=ax.transAxes, 
+                    color=THEME['text'], linewidth=1, zorder=11)
 
     # --- ATTRIBUTION (bottom right) ---
     if FONTS:
@@ -321,6 +416,14 @@ def create_poster(city, country, point, dist, output_file):
     plt.savefig(output_file, dpi=300, facecolor=THEME['bg'])
     plt.close()
     print(f"✓ Done! Poster saved as {output_file}")
+    
+    # 6. Overlay custom labels if provided
+    if args and (args.label1 or args.label2 or args.label3):
+        label3 = args.label3
+        if label3 is None and args.lat is not None and args.lon is not None:
+            label3 = format_coords(args.lat, args.lon)
+        overlay_labels_png(output_file, args.label1, args.label2, label3, THEME.get("text", "#000000"))
+        print(f"✓ Custom labels overlaid")
 
 def print_examples():
     """Print usage examples."""
@@ -421,6 +524,12 @@ Examples:
     parser.add_argument('--theme', '-t', type=str, default='feature_based', help='Theme name (default: feature_based)')
     parser.add_argument('--distance', '-d', type=int, default=29000, help='Map radius in meters (default: 29000)')
     parser.add_argument('--list-themes', action='store_true', help='List all available themes')
+    parser.add_argument('--lat', type=float, help='Latitude (skip geocoding)')
+    parser.add_argument('--lon', type=float, help='Longitude (skip geocoding)')
+    parser.add_argument('--label1', type=str, help='Bottom label line 1 (title)')
+    parser.add_argument('--label2', type=str, help='Bottom label line 2 (subtitle)')
+    parser.add_argument('--label3', type=str, help='Bottom label line 3 (coords). If omitted and lat/lon present, it will be auto-formatted.')
+    parser.add_argument('--no-letterspacing', action='store_true', help='Disable letter-spaced default city/country text')
     
     args = parser.parse_args()
     
@@ -435,8 +544,8 @@ Examples:
         os.sys.exit(0)
     
     # Validate required arguments
-    if not args.city or not args.country:
-        print("Error: --city and --country are required.\n")
+    if not (args.lat is not None and args.lon is not None) and (not args.city or not args.country):
+        print("Error: Either --city and --country, or --lat and --lon are required.\n")
         print_examples()
         os.sys.exit(1)
     
@@ -456,9 +565,13 @@ Examples:
     
     # Get coordinates and generate poster
     try:
-        coords = get_coordinates(args.city, args.country)
-        output_file = generate_output_filename(args.city, args.theme)
-        create_poster(args.city, args.country, coords, args.distance, output_file)
+        if args.lat is not None and args.lon is not None:
+            coords = (args.lat, args.lon)
+            print(f"✓ Using provided coordinates: {args.lat}, {args.lon}")
+        else:
+            coords = get_coordinates(args.city, args.country)
+        output_file = generate_output_filename(args.city, args.theme, args.lat, args.lon)
+        create_poster(args.city, args.country, coords, args.distance, output_file, args)
         
         print("\n" + "=" * 50)
         print("✓ Poster generation complete!")
