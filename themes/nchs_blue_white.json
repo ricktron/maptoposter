@@ -1,4 +1,3 @@
-cat > themes/nchs_blue_white.json <<'JSON'
 {
   "name": "NCHS Blue & White",
   "description": "Nolan Catholic school-color palette: deep blue background with crisp white roads",
@@ -14,4 +13,3 @@ cat > themes/nchs_blue_white.json <<'JSON'
   "road_residential": "#AFC8FF",
   "road_default": "#C6D8FF"
 }
-JSON
