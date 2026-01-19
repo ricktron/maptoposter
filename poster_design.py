@@ -191,25 +191,26 @@ def simplify_roads(edges_gdf: gpd.GeoDataFrame, detail: str = "standard", hide_f
         
     df['highway_type'] = df['highway'].apply(get_highway_type)
     
-    # Get service attribute (for parking_aisle detection)
-    def get_service_type(x):
-        if x is None or (isinstance(x, float) and np.isnan(x)):
+    # Normalize service attribute (for parking_aisle detection)
+    def norm(x):
+        if isinstance(x, list) and x:
+            return x[0]
+        if x is None:
             return None
-        if isinstance(x, list):
-            return str(x[0]) if x else None
         return str(x)
-    
-    if 'service' in df.columns:
-        df['service_type'] = df['service'].apply(get_service_type)
+
+    if "service" in df.columns:
+        df["service_type"] = df["service"].apply(norm)
     else:
-        df['service_type'] = None
+        df["service_type"] = None
     
     # Exclude logic
     exclude_types = set()
     
     if hide_flags.get("hide_parking"):
-        exclude_types.update(["service", "parking_aisle"]) # simplistic
-        # Better: check 'service' tag if exists
+        # Only hide parking aisles, keep service=driveway etc (campus needs these)
+        parking_aisle_mask = (df["highway_type"] == "service") & (df["service_type"] == "parking_aisle")
+        df = df[~parking_aisle_mask]
         
     if hide_flags.get("hide_service"):
         exclude_types.add("service")
