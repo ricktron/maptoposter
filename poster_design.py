@@ -183,50 +183,41 @@ def simplify_roads(edges_gdf: gpd.GeoDataFrame, detail: str = "standard", hide_f
     if 'highway' not in df.columns:
         return df
 
+    # Robust normalization helper
+    def norm_tag(v):
+        """Normalize tag value: if list, return first element; if None, return None; else return str."""
+        if isinstance(v, list):
+            return v[0] if v else None
+        if v is None:
+            return None
+        return str(v)
+
     # Normalize highway to string (sometimes it's a list)
     def get_highway_type(x):
-        if isinstance(x, list):
-            return x[0]
-        return str(x)
+        return norm_tag(x)
         
     df['highway_type'] = df['highway'].apply(get_highway_type)
     
-    # Normalize service attribute (for parking_aisle detection)
-    def norm(x):
-        if isinstance(x, list) and x:
-            return x[0]
-        if x is None:
-            return None
-        return str(x)
-
-    if "service" in df.columns:
-        df["service_type"] = df["service"].apply(norm)
+    # Compute service subtype column after highway_type is created
+    if 'service' in df.columns:
+        df['service_type'] = df['service'].apply(norm_tag)
     else:
-        df["service_type"] = None
+        df['service_type'] = None
     
     # Exclude logic
     exclude_types = set()
 
-    def _norm(x):
-        if isinstance(x, list) and x:
-            return x[0]
-        if x is None:
-            return None
-        return str(x)
-
     # Hide only parking aisles, NOT all service roads (campus driveways are service)
+    # DO NOT add "service" to exclude_types
     if hide_flags.get("hide_parking"):
-        if "service" in df.columns:
-            df["service_type"] = df["service"].apply(_norm)
-        else:
-            df["service_type"] = None
-
+        # Drop only rows where highway_type == "service" AND service_type == "parking_aisle"
+        # Keep service_type == "driveway" and any other service types
         parking_aisle_mask = (df["highway_type"] == "service") & (df["service_type"] == "parking_aisle")
         df = df[~parking_aisle_mask]
 
-    # If you hide footpaths, keep footways (campus uses footway heavily)
+    # Keep existing hide_footpaths behavior
     if hide_flags.get("hide_footpaths"):
-        exclude_types.update(["path", "cycleway", "steps", "pedestrian"])
+        exclude_types.update(["footway", "path", "cycleway", "steps", "pedestrian"])
 
     # Detail levels
     keep_core = {"primary", "secondary", "tertiary", "residential", "unclassified", "living_street", "service", "road"}
@@ -254,10 +245,11 @@ def simplify_roads(edges_gdf: gpd.GeoDataFrame, detail: str = "standard", hide_f
             return True
 
     # Apply filtering
-    # 1. remove explicit hides
+    # 1. Apply parking_aisle drop first (already done above if hide_parking is enabled)
+    # 2. Apply exclude_types mask for the remaining types
     mask = ~df['highway_type'].isin(exclude_types)
     
-    # 2. specific detail logic
+    # 3. Apply specific detail logic
     if detail == "campus":
         # Apply campus-specific filtering
         campus_mask = df.apply(lambda row: road_keep(row, detail), axis=1)
@@ -268,8 +260,14 @@ def simplify_roads(edges_gdf: gpd.GeoDataFrame, detail: str = "standard", hide_f
     else:  # standard
         # Standard detail: apply explicit hides only
         pass
+    
+    df_filtered = df[mask]
+    
+    # Debug safeguard: warn if very few edges remain
+    if len(df_filtered) < 20:
+        print(f"Warning: very few road features after filtering ({len(df_filtered)} edges); check hide flags.")
         
-    return df[mask]
+    return df_filtered
 
 def collapse_tiers(edges_gdf: gpd.GeoDataFrame, tiers: str = "simple") -> gpd.GeoDataFrame:
     """Assign a 'tier' column: major, minor, path."""
