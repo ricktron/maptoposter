@@ -211,8 +211,9 @@ def simplify_roads(edges_gdf: gpd.GeoDataFrame, detail: str = "standard", hide_f
     exclude_types = set()
 
     # Hide only parking aisles, NOT all service roads (campus driveways are service)
-    # DO NOT add "service" to exclude_types
-    if hide_flags.get("hide_parking"):
+    # DO NOT add "service" to exclude_types - this was the bug
+    hide_parking_enabled = hide_flags.get("hide_parking", False)
+    if hide_parking_enabled:
         # Drop only rows where highway_type == "service" AND service_type == "parking_aisle"
         # Keep service_type == "driveway" and any other service types
         parking_aisle_mask = (df["highway_type"] == "service") & (df["service_type"] == "parking_aisle")
@@ -266,20 +267,24 @@ def simplify_roads(edges_gdf: gpd.GeoDataFrame, detail: str = "standard", hide_f
     
     df_filtered = df[mask]
     
-    # Debug output for campus detail level
-    if detail == "campus":
-        filtered_count = len(df_filtered)
-        print(f"Road filter kept {filtered_count} / {original_count} edges")
-        if 'highway_type' in df_filtered.columns:
-            top_types = df_filtered['highway_type'].value_counts().head(10)
-            print("Top highway_type counts:")
-            for hwy_type, count in top_types.items():
-                print(f"  {hwy_type}: {count}")
+    # Safety fallback: if too few edges remain, re-run with hide_parking=False
+    if len(df_filtered) < 30 and hide_parking_enabled:
+        print(f"Warning: very few road features after filtering ({len(df_filtered)} edges); re-running with hide_parking=False")
+        # Re-run filtering without hide_parking
+        df_retry = edges_gdf.copy()
+        hide_flags_retry = hide_flags.copy()
+        hide_flags_retry["hide_parking"] = False
+        return simplify_roads(df_retry, detail, hide_flags_retry)
     
-    # Debug safeguard: warn if very few edges remain
-    if len(df_filtered) < 20:
-        print(f"Warning: very few road features after filtering ({len(df_filtered)} edges); check hide flags.")
-        
+    # Minimal debug output
+    filtered_count = len(df_filtered)
+    print(f"Road filter kept {filtered_count} / {original_count} edges")
+    if 'highway_type' in df_filtered.columns:
+        top_types = df_filtered['highway_type'].value_counts().head(5)
+        print("Top highway_type counts:")
+        for hwy_type, count in top_types.items():
+            print(f"  {hwy_type}: {count}")
+    
     return df_filtered
 
 def collapse_tiers(edges_gdf: gpd.GeoDataFrame, tiers: str = "simple") -> gpd.GeoDataFrame:
