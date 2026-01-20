@@ -206,17 +206,27 @@ def simplify_roads(edges_gdf: gpd.GeoDataFrame, detail: str = "standard", hide_f
     
     # Exclude logic
     exclude_types = set()
-    
+
+    def _norm(x):
+        if isinstance(x, list) and x:
+            return x[0]
+        if x is None:
+            return None
+        return str(x)
+
+    # Hide only parking aisles, NOT all service roads (campus driveways are service)
     if hide_flags.get("hide_parking"):
-        # Only hide parking aisles, keep service=driveway etc (campus needs these)
+        if "service" in df.columns:
+            df["service_type"] = df["service"].apply(_norm)
+        else:
+            df["service_type"] = None
+
         parking_aisle_mask = (df["highway_type"] == "service") & (df["service_type"] == "parking_aisle")
         df = df[~parking_aisle_mask]
-        
-    if hide_flags.get("hide_service"):
-        exclude_types.add("service")
-        
+
+    # If you hide footpaths, keep footways (campus uses footway heavily)
     if hide_flags.get("hide_footpaths"):
-        exclude_types.update(["footway", "path", "cycleway", "steps", "pedestrian"])
+        exclude_types.update(["path", "cycleway", "steps", "pedestrian"])
 
     # Detail levels
     keep_core = {"primary", "secondary", "tertiary", "residential", "unclassified", "living_street", "service", "road"}
