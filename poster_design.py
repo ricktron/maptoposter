@@ -179,6 +179,9 @@ def simplify_roads(edges_gdf: gpd.GeoDataFrame, detail: str = "standard", hide_f
     df = edges_gdf.copy()
     hide_flags = hide_flags or {}
     
+    # Store original count for debug output
+    original_count = len(df)
+    
     # Base filter by highway tag existence
     if 'highway' not in df.columns:
         return df
@@ -262,6 +265,16 @@ def simplify_roads(edges_gdf: gpd.GeoDataFrame, detail: str = "standard", hide_f
         pass
     
     df_filtered = df[mask]
+    
+    # Debug output for campus detail level
+    if detail == "campus":
+        filtered_count = len(df_filtered)
+        print(f"Road filter kept {filtered_count} / {original_count} edges")
+        if 'highway_type' in df_filtered.columns:
+            top_types = df_filtered['highway_type'].value_counts().head(10)
+            print("Top highway_type counts:")
+            for hwy_type, count in top_types.items():
+                print(f"  {hwy_type}: {count}")
     
     # Debug safeguard: warn if very few edges remain
     if len(df_filtered) < 20:
