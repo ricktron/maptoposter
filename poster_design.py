@@ -224,7 +224,8 @@ def simplify_roads(edges_gdf: gpd.GeoDataFrame, detail: str = "standard", hide_f
         exclude_types.update(["footway", "path", "cycleway", "steps", "pedestrian"])
 
     # Detail levels
-    keep_core = {"primary", "secondary", "tertiary", "residential", "unclassified", "living_street", "service", "road"}
+    # Campus mode: include major road types so nearby highways appear when bbox includes them
+    keep_core = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary", "secondary_link", "tertiary", "residential", "unclassified", "living_street", "service", "road"}
     drop_paths = {"footway", "path", "pedestrian", "steps", "cycleway", "track"}
     
     def road_keep(row, detail):
@@ -448,13 +449,26 @@ def render_poster(bundle: Dict, output_path: str, format_type: str = "png"):
             width = style.road_widths.get(tier, 1.0)
             alpha = style.road_alphas.get(tier, 1.0)
             
-            # Ensure minor roads are visible in campus mode with simple tiers
-            if tier == "minor" and tiers_mode == "simple" and detail == "campus":
-                # Ensure minimum visibility for minor roads
-                if width < 0.5:
-                    width = 0.5
-                if alpha < 0.6:
-                    alpha = 0.6
+            # Ensure all roads are visible in campus mode with simple tiers
+            if tiers_mode == "simple" and detail == "campus":
+                if tier == "major":
+                    # Ensure minimum visibility for major roads
+                    if width < 1.6:
+                        width = 1.6
+                    if alpha < 0.85:
+                        alpha = 0.85
+                elif tier == "minor":
+                    # Ensure minimum visibility for minor roads
+                    if width < 1.0:
+                        width = 1.0
+                    if alpha < 0.75:
+                        alpha = 0.75
+                elif tier == "path":
+                    # Ensure minimum visibility for paths
+                    if width < 0.6:
+                        width = 0.6
+                    if alpha < 0.55:
+                        alpha = 0.55
             
             # Layered mode: draw casing
             if style.linework_style == "layered":

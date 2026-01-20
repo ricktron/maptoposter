@@ -288,6 +288,11 @@ def create_poster(city, country, point, dist, output_file, args=None):
     edges_filtered = simplify_roads(edges_proj, args.detail, hide_flags)
     edges_tiered = collapse_tiers(edges_filtered, args.tiers)
     
+    # Print tier counts when detail == "campus" to confirm major roads are present
+    if args.detail == "campus" and not edges_tiered.empty and "tier" in edges_tiered.columns:
+        print("\nTier counts after assignment:")
+        print(edges_tiered["tier"].value_counts())
+    
     # 6. Build Bundle
     
     # Get projected viewing bbox
